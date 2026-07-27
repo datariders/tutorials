@@ -20,15 +20,17 @@ FALLBACKS = ["claude-sonnet-5", "gemini/gemini-2.5-pro"]
 def main():
     response = completion(
         model=PRIMARY,
-        messages=[{"role": "user", "content": "Say hello in exactly five words."}],
+        messages=[{"role": "user", "content": "Explain LiteLLM in less than 10 sentences."}],
         fallbacks=FALLBACKS,
     )
 
     message = response["choices"][0]["message"]["content"]
     model_used = response.get("model", PRIMARY)
+    usage = response["usage"]
 
     print(f"Model used: {model_used}")
     print(f"Reply:      {message.strip()}")
+    print(f"Tokens: {usage['total_tokens']}")
 
 
 if __name__ == "__main__":
