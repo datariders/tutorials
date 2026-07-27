@@ -24,7 +24,7 @@ MODEL = os.getenv("LITELLM_MODEL", "claude-sonnet-5")
 def main():
     response = completion(
         model=MODEL,
-        messages=[{"role": "user", "content": "Say hello in exactly five words."}],
+        messages=[{"role": "user", "content": "Explain LiteLLM in less than 10 sentences."}],
     )
 
     message = response["choices"][0]["message"]["content"]
