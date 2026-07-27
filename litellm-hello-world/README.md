@@ -29,8 +29,10 @@ python hello.py
 
 ```
 Model:  claude-sonnet-5
-Reply:  Hello there, wonderful human!
-Tokens: 24
+Reply:  # LiteLLM
+
+LiteLLM is an open-source Python library that provides a unified interface for calling over 100 different Large Language Model (LLM) APIs, including OpenAI, Anthropic, Cohere, Azure, Hugging Face, and many others. It standardizes inputs and outputs to match the OpenAI API format, so developers can switch between providers without rewriting their code. The library supports both a Python SDK for direct integration and a proxy server that can be deployed to manage multiple LLM calls centrally. Key features include load balancing, fallback logic (automatically retrying with a different model if one fails), and cost tracking across providers. It also supports streaming responses, function calling, and async operations for production-grade applications. LiteLLM is particularly useful for teams that want to avoid vendor lock-in or need to route requests across multiple LLM providers based on cost, latency, or availability. The proxy server component can act as a gateway, adding features like rate limiting, budget management, and logging/observability integrations (e.g., with tools like Langfuse or Helicone). It's widely used in LLM application development for simplifying multi-provider orchestration and reducing complexity when experimenting with or scaling across different models.
+Tokens: 420
 ```
 
 Change the model without touching any code:
