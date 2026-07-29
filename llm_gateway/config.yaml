@@ -1,0 +1,115 @@
+# =============================================================================
+# LiteLLM Proxy (AI Gateway) configuration
+# Showcases: multi-provider routing, fallbacks/load-balancing, caching,
+#            cost tracking + observability, and rate limits/budgets.
+#
+# Start with:  litellm --config config.yaml --port 4000 --detailed_debug
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1) MODEL LIST — the routing table.
+#    Each entry maps a *public* model_name (what your app asks for) to an
+#    *upstream* provider model. Multiple entries with the SAME model_name form
+#    a load-balancing group; LiteLLM picks between them and fails over.
+# -----------------------------------------------------------------------------
+model_list:
+  # --- A single public alias "smart-chat" backed by TWO providers -------------
+  # Your app calls model="smart-chat"; the gateway load-balances across these
+  # and, if one errors/rate-limits, falls back (see router_settings below).
+  - model_name: smart-chat
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      rpm: 60                    # per-deployment rate limit (requests/min)
+    model_info:
+      id: openai-gpt4o-mini
+
+  - model_name: smart-chat
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+      rpm: 60
+    model_info:
+      id: anthropic-haiku
+
+  # --- Direct, provider-specific aliases (explicit routing) -------------------
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # --- A "premium" alias used to demonstrate fallbacks ------------------------
+  # If the premium model fails, requests fall back to smart-chat (cheaper).
+  - model_name: premium-chat
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+# -----------------------------------------------------------------------------
+# 2) ROUTER SETTINGS — fallbacks, load balancing strategy, retries.
+# -----------------------------------------------------------------------------
+router_settings:
+  # How to choose between deployments that share a model_name.
+  # "usage-based-routing-v2" balances by TPM/RPM headroom; "simple-shuffle"
+  # is random. Use latency-based in prod if you track it.
+  routing_strategy: usage-based-routing-v2
+
+  # If a call to a model fails, try these models in order instead.
+  fallbacks:
+    - premium-chat: ["smart-chat"]
+    - smart-chat: ["gpt-4o-mini", "claude-haiku"]
+
+  # Retry transient errors before giving up / falling back.
+  num_retries: 2
+  timeout: 30                    # seconds per request
+  allowed_fails: 3               # failures before a deployment is cooled down
+  cooldown_time: 30              # seconds a failing deployment is skipped
+
+# -----------------------------------------------------------------------------
+# 3) CACHING — cut cost + latency for repeated prompts.
+#    Uses Redis if REDIS_HOST is set, otherwise in-memory (single process).
+# -----------------------------------------------------------------------------
+litellm_settings:
+  # Turn on response caching for identical requests.
+  cache: true
+  cache_params:
+    # "local" = in-memory cache (no extra infra needed). Works for the demo.
+    # To use shared/persistent caching, run Redis (see docker-compose.yml),
+    # set REDIS_HOST/REDIS_PORT in .env, and change this to `type: redis`.
+    type: local
+    ttl: 600                    # seconds to keep a cached completion
+
+  # Cost tracking + observability:
+  # - token usage + dollar cost are ALWAYS tracked per response.
+  # - to ship logs to an external observability tool, add callbacks here, e.g.:
+  #     success_callback: ["datadog"]
+  #     failure_callback: ["datadog"]
+  #   (requires the provider's account + env keys). Left off for the demo.
+
+  # Redact request/response bodies from logs if you want (compliance).
+  # turn_off_message_logging: true
+
+  # Set a global default so an unknown model name still resolves.
+  drop_params: true             # silently drop provider-unsupported params
+
+# -----------------------------------------------------------------------------
+# 4) GENERAL SETTINGS — auth, budgets, rate limits, admin UI.
+# -----------------------------------------------------------------------------
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY   # clients authenticate with this
+
+  # Persist spend logs, virtual keys, and budgets (optional but recommended).
+  # database_url: os.environ/DATABASE_URL
+
+  # Global spend ceiling for the whole proxy (USD). Requires a database.
+  # max_budget: 10
+  # budget_duration: 30d
+
+  # Per-key defaults when you mint virtual keys via /key/generate:
+  # default_max_budget: 1
+  # default_budget_duration: 1d

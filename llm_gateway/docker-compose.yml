@@ -1,0 +1,27 @@
+# Optional infrastructure for the "full" demo:
+#   - Redis   -> distributed caching + rate limiting
+#   - Postgres -> spend tracking, virtual keys, budgets, admin UI history
+#
+# You do NOT need this for the basic routing/fallback/caching(in-memory) demos.
+# Start it with:  docker compose up -d
+# Then set REDIS_HOST=localhost and DATABASE_URL in your .env.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: llmproxy
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: litellm
+    ports:
+      - "5432:5432"
+    volumes:
+      - litellm_pgdata:/var/lib/postgresql/data
+
+volumes:
+  litellm_pgdata:
