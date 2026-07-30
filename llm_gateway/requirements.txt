@@ -1,0 +1,17 @@
+# LiteLLM proxy server with all extras (includes caching, budgets, admin UI deps)
+litellm[proxy]==1.65.0
+
+# Client-side: use the standard OpenAI SDK pointed at the gateway
+openai>=1.30.0
+
+# Redis client for the caching demo (optional; only needed if you enable Redis cache)
+redis>=5.0.0
+
+# Nice tables in the demo scripts
+rich>=13.7.0
+
+# Load .env files
+python-dotenv>=1.0.0
+
+# Used by the virtual-keys admin demo (05) to call the proxy REST API
+requests>=2.31.0
