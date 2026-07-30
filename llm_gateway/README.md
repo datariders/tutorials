@@ -19,6 +19,70 @@ messy parts centrally:
 | **Cost & observability** | Per-call token usage + dollar cost, spend logs, admin UI. |
 | **Rate limits & budgets** | Scoped virtual keys per team/app with their own caps. |
 
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Clients["Client applications"]
+        direction LR
+        APP["Your app<br/>(Python + OpenAI SDK)"]
+        DEMOS["Demo scripts<br/>01–05"]
+    end
+
+    subgraph Gateway["LiteLLM Proxy — the LLM Gateway (port 4000)"]
+        direction TB
+        AUTH["Auth layer<br/>master key / virtual keys"]
+        ROUTER["Router<br/>routing table · load balancing<br/>fallbacks · retries · cooldown"]
+        CACHE["Response cache<br/>local (in-memory) or Redis"]
+        COST["Cost tracking &amp; observability<br/>tokens · $ cost · spend logs"]
+        LIMITS["Rate limits &amp; budgets<br/>per key / per team"]
+        UI["Admin UI<br/>/ui · /spend/logs"]
+
+        AUTH --> ROUTER
+        ROUTER --> CACHE
+        ROUTER --> COST
+        AUTH --> LIMITS
+    end
+
+    subgraph Providers["Upstream model providers"]
+        direction LR
+        OAI["OpenAI<br/>gpt-4o-mini · gpt-4o"]
+        ANTH["Anthropic<br/>claude-haiku-4.5"]
+    end
+
+    subgraph Infra["Optional infrastructure (Docker)"]
+        direction LR
+        REDIS[("Redis<br/>cache + rate limiting")]
+        PG[("PostgreSQL<br/>spend · keys · budgets")]
+    end
+
+    APP -->|"OpenAI-compatible request<br/>Bearer master/virtual key"| AUTH
+    DEMOS -->|"model = smart-chat / gpt-4o-mini / claude-haiku"| AUTH
+
+    ROUTER -->|"provider API key<br/>(never exposed to clients)"| OAI
+    ROUTER -->|"provider API key"| ANTH
+
+    CACHE -.-> REDIS
+    LIMITS -.-> REDIS
+    COST -.-> PG
+    LIMITS -.-> PG
+    UI -.-> PG
+
+    classDef gw fill:#e8f0fe,stroke:#4285f4,stroke-width:1px,color:#1a1a1a;
+    classDef prov fill:#e6f4ea,stroke:#34a853,stroke-width:1px,color:#1a1a1a;
+    classDef infra fill:#fef7e0,stroke:#f9ab00,stroke-width:1px,color:#1a1a1a;
+    classDef client fill:#f3e8fd,stroke:#a142f4,stroke-width:1px,color:#1a1a1a;
+
+    class AUTH,ROUTER,CACHE,COST,LIMITS,UI gw;
+    class OAI,ANTH prov;
+    class REDIS,PG infra;
+    class APP,DEMOS client;
+```
+
+Clients only ever talk to the gateway with a gateway key; provider credentials
+stay inside the gateway. Redis and PostgreSQL (dashed) are optional and only
+needed for shared caching, persistent spend logs, and virtual-key budgets.
+
 ## Project layout
 
 ```
