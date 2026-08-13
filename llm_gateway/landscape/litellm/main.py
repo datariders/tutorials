@@ -12,7 +12,11 @@ Install:
     pip install -r requirements.txt
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from litellm import completion
+
 
 PROMPT = "Explain what an LLM gateway is, in two sentences."
 PRIMARY_MODEL = "gpt-4o-mini"
