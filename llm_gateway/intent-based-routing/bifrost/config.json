@@ -1,0 +1,65 @@
+{
+  "providers": [
+    {
+      "id": "bedrock-claude",
+      "type": "bedrock",
+      "region": "us-east-1",
+      "auth": {},
+      "models": ["anthropic.claude-sonnet-4-6-v1:0"]
+    },
+    {
+      "id": "anthropic-direct",
+      "type": "anthropic",
+      "auth": {
+        "api_key": "${ANTHROPIC_API_KEY}"
+      },
+      "models": ["claude-sonnet-5", "claude-opus-4-8"]
+    }
+  ],
+
+  "governance": {
+    "virtual_keys": [
+      {
+        "id": "workshop-team-a",
+        "budget": { "limit": 20, "currency": "USD", "duration": "1M" },
+        "rate_limits": {
+          "requests": { "limit": 5, "duration": "1m" },
+          "tokens": { "limit": 20000, "duration": "1h" }
+        }
+      },
+      {
+        "id": "workshop-team-b",
+        "budget": { "limit": 1, "currency": "USD", "duration": "1M" },
+        "rate_limits": {
+          "requests": { "limit": 20, "duration": "1m" },
+          "tokens": { "limit": 20000, "duration": "1h" }
+        }
+      }
+    ],
+    "provider_config": [
+      {
+        "id": "bedrock-claude",
+        "rate_limits": {
+          "requests": { "limit": 500, "duration": "1h" }
+        }
+      }
+    ]
+  },
+
+  "cache": {
+    "enabled": true,
+    "type": "semantic",
+    "similarity_threshold": 0.92,
+    "ttl": "1h"
+  },
+
+  "telemetry": {
+    "otlp_endpoint": "${OTLP_ENDPOINT}",
+    "enabled": true
+  },
+
+  "server": {
+    "port": 8080,
+    "log_level": "info"
+  }
+}
