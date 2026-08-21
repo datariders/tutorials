@@ -1,0 +1,7 @@
+[
+  {
+    "targetGroupArn": "arn:aws:elasticloadbalancing:<REGION>:<ACCOUNT_ID>:targetgroup/bifrost-tg/<ID>",
+    "containerName": "bifrost",
+    "containerPort": 8080
+  }
+]

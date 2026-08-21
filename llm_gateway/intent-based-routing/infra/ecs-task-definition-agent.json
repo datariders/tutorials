@@ -1,0 +1,28 @@
+{
+  "family": "intent-agent",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/bifrostExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "agent",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/intent-agent:latest",
+      "portMappings": [{ "containerPort": 8000, "protocol": "tcp" }],
+      "essential": true,
+      "environment": [
+        { "name": "BIFROST_URL", "value": "http://<bifrost-alb-dns-name>:8080" },
+        { "name": "BIFROST_VIRTUAL_KEY", "value": "workshop-team-a" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/intent-agent",
+          "awslogs-region": "<REGION>",
+          "awslogs-stream-prefix": "agent"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,294 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Intent-based agent routing workshop: VPC, ALB, ECS Fargate cluster running the
+  Bifrost gateway and the intent-routing agent, IAM roles, and a Secrets Manager
+  secret for the Anthropic API key. Public subnets are used to avoid NAT gateway
+  cost for the workshop; see README for the production hardening notes.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: llm-gateway-workshop
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Description: Your Anthropic API key (sk-ant-...)
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-sonnet-4-6-v1:0
+  BifrostImageUri:
+    Type: String
+    Description: Full ECR image URI for the Bifrost image (built and pushed by deploy.sh before this stack runs)
+  AgentImageUri:
+    Type: String
+    Description: Full ECR image URI for the agent image (built and pushed by deploy.sh before this stack runs)
+
+Resources:
+  # --- Networking ---------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: !Sub "${ProjectName}-vpc" }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  SubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnetA, RouteTableId: !Ref PublicRouteTable }
+  SubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnetB, RouteTableId: !Ref PublicRouteTable }
+
+  # --- Security groups -----------------------------------------------------
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound HTTP to the workshop ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 8080, ToPort: 8080, CidrIp: 0.0.0.0/0 }
+        - { IpProtocol: tcp, FromPort: 8000, ToPort: 8000, CidrIp: 0.0.0.0/0 }
+
+  BifrostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Bifrost inbound only from the ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 8080, ToPort: 8080, SourceSecurityGroupId: !Ref AlbSecurityGroup }
+
+  AgentSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow the agent inbound only from the ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 8000, ToPort: 8000, SourceSecurityGroupId: !Ref AlbSecurityGroup }
+
+  # --- Secrets ---------------------------------------------------------------
+  AnthropicSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${ProjectName}/anthropic-api-key"
+      SecretString: !Sub '{"ANTHROPIC_API_KEY":"${AnthropicApiKey}"}'
+
+  # --- IAM ---------------------------------------------------------------
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadAnthropicSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AnthropicSecret
+
+  BifrostTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: sts:AssumeRole }
+      Policies:
+        - PolicyName: InvokeBedrock
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.*"
+
+  # --- ECS cluster & logs ---------------------------------------------------
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties: { ClusterName: !Sub "${ProjectName}-cluster" }
+
+  BifrostLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/ecs/${ProjectName}-bifrost", RetentionInDays: 7 }
+  AgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub "/ecs/${ProjectName}-agent", RetentionInDays: 7 }
+
+  # --- Load balancer ---------------------------------------------------------
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+      SecurityGroups: [!Ref AlbSecurityGroup]
+
+  BifrostTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /
+      Matcher: { HttpCode: "200-499" }
+
+  AgentTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Port: 8000
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /healthz
+
+  BifrostListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 8080
+      Protocol: HTTP
+      DefaultActions: [{ Type: forward, TargetGroupArn: !Ref BifrostTargetGroup }]
+
+  AgentListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 8000
+      Protocol: HTTP
+      DefaultActions: [{ Type: forward, TargetGroupArn: !Ref AgentTargetGroup }]
+
+  # --- Task definitions --------------------------------------------------
+  BifrostTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ProjectName}-bifrost"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt BifrostTaskRole.Arn
+      ContainerDefinitions:
+        - Name: bifrost
+          Image: !Ref BifrostImageUri
+          PortMappings: [{ ContainerPort: 8080 }]
+          Environment:
+            - { Name: AWS_REGION, Value: !Ref "AWS::Region" }
+            - { Name: BEDROCK_MODEL_ID, Value: !Ref BedrockModelId }
+          Secrets:
+            - { Name: ANTHROPIC_API_KEY, ValueFrom: !Ref AnthropicSecret }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref BifrostLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: bifrost
+
+  AgentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ProjectName}-agent"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref AgentImageUri
+          PortMappings: [{ ContainerPort: 8000 }]
+          Environment:
+            - { Name: BIFROST_URL, Value: !Sub "http://${Alb.DNSName}:8080" }
+            - { Name: BIFROST_VIRTUAL_KEY, Value: workshop-team-a }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AgentLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: agent
+
+  # --- Services ---------------------------------------------------------
+  BifrostService:
+    Type: AWS::ECS::Service
+    DependsOn: BifrostListener
+    Properties:
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref BifrostTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+          SecurityGroups: [!Ref BifrostSecurityGroup]
+          AssignPublicIp: ENABLED
+      LoadBalancers:
+        - { TargetGroupArn: !Ref BifrostTargetGroup, ContainerName: bifrost, ContainerPort: 8080 }
+
+  AgentService:
+    Type: AWS::ECS::Service
+    DependsOn: AgentListener
+    Properties:
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref AgentTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+          SecurityGroups: [!Ref AgentSecurityGroup]
+          AssignPublicIp: ENABLED
+      LoadBalancers:
+        - { TargetGroupArn: !Ref AgentTargetGroup, ContainerName: agent, ContainerPort: 8000 }
+
+Outputs:
+  BifrostURL:
+    Value: !Sub "http://${Alb.DNSName}:8080"
+  AgentURL:
+    Value: !Sub "http://${Alb.DNSName}:8000"
+  ClusterName:
+    Value: !Ref Cluster
+  BifrostImageUri:
+    Value: !Ref BifrostImageUri
+  AgentImageUri:
+    Value: !Ref AgentImageUri

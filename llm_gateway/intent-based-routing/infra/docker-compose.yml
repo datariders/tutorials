@@ -1,0 +1,26 @@
+services:
+  bifrost:
+    image: maximhq/bifrost:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../bifrost/config.json:/app/config.json:ro
+      - bifrost-data:/app/data
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+
+  agent:
+    build: ../agent
+    ports:
+      - "8000:8000"
+    environment:
+      - BIFROST_URL=http://bifrost:8080
+      - BIFROST_VIRTUAL_KEY=workshop-team-a
+    depends_on:
+      - bifrost
+
+volumes:
+  bifrost-data:
